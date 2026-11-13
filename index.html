@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Impulse — a particle playground</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#080f19;color:#e5eef9;font:14px system-ui,sans-serif;overflow:hidden}canvas{display:block;width:100vw;height:100vh;touch-action:none}header{position:absolute;top:36px;left:40px;pointer-events:none}.eyebrow{color:#5ddbc8;font-size:11px;letter-spacing:3px;font-weight:700}h1{font-size:38px;letter-spacing:-1.5px;margin:8px 0}header p{color:#8799ad;margin:0;font-size:13px}.panel{position:absolute;bottom:30px;left:40px;right:40px;display:flex;align-items:center;gap:24px;padding:18px 22px;border:1px solid #ffffff16;border-radius:16px;background:#101c2bcc;backdrop-filter:blur(16px)}.status{display:flex;align-items:center;gap:8px;font-size:12px;color:#a5b6ca}.dot{width:6px;height:6px;border-radius:50%;background:#5ddbc8;box-shadow:0 0 10px #5ddbc8}label{font-size:12px;color:#a5b6ca;display:flex;gap:12px;align-items:center}input{accent-color:#5ddbc8;width:100px}button{background:#233247;color:#e5eef9;border:1px solid #ffffff18;border-radius:8px;padding:9px 15px;cursor:pointer}button:hover{background:#31465f}.spacer{flex:1}.hint{position:absolute;right:40px;top:42px;color:#7f94ab;font-size:12px}#error{position:absolute;inset:40%;display:none;color:#ffc995}@media(max-width:650px){header{top:24px;left:24px}.hint{display:none}.panel{left:16px;right:16px;bottom:16px;gap:12px;padding:14px;flex-wrap:wrap}.status{display:none}h1{font-size:30px}}
+</style>
+</head>
+<body>
+<canvas id="scene" aria-label="Interactive 3D particle stream striking a cube"></canvas>
+<header><div class="eyebrow">PHYSICS PLAYGROUND / 01</div><h1>Impulse</h1><p>A little momentum goes a long way.</p></header>
+<div class="hint">MOVE TO AIM &nbsp; · &nbsp; HOLD TO BOOST</div>
+<div class="panel"><div class="status"><span class="dot"></span><span id="count">STREAM ACTIVE</span></div><label>Flow <input id="flow" type="range" min="30" max="240" value="120" aria-label="Particle flow rate"></label><label>Force <input id="force" type="range" min="8" max="24" value="14" aria-label="Particle speed"></label><div class="spacer"></div><button id="pause">Pause</button><button id="reset">Reset ↺</button></div>
+<div id="error">This demo needs a browser with WebGL 2 support.</div>
+<script>
+'use strict';
+const canvas=document.querySelector('#scene'),gl=canvas.getContext('webgl2',{antialias:true});
+if(!gl){document.querySelector('#error').style.display='block';}else{
+const vs=`#version 300 es
+precision highp float;
+layout(location=0) in vec3 position;layout(location=1) in vec3 normal;layout(location=2) in vec4 instance;
+uniform mat4 vp,model;uniform bool particles;
+out vec3 world,norm;out float life;
+void main(){vec4 w=particles?vec4(position*0.065+instance.xyz,1.):model*vec4(position,1.);world=w.xyz;norm=particles?normal:normalize(mat3(model)*normal);life=instance.w;gl_Position=vp*w;}`;
+const fs=`#version 300 es
+precision highp float;
+in vec3 world,norm;in float life;uniform vec3 color,eye,cubePos;uniform int kind;out vec4 outColor;
+void main(){vec3 n=normalize(norm),l=normalize(vec3(-3,8,5)),v=normalize(eye-world);float diffuse=max(dot(n,l),0.);float spec=pow(max(dot(n,normalize(l+v)),0.),kind==1?64.:28.);vec3 c=color;
+if(kind==0){vec2 grid=abs(fract(world.xz*0.5-0.5)-0.5)/fwidth(world.xz*0.5);float line=1.-min(min(grid.x,grid.y),1.);c=mix(c,vec3(.12,.20,.28),line*.45);float shadow=exp(-dot(world.xz-cubePos.xz,world.xz-cubePos.xz)*.55);c*=1.-shadow*.6;}
+c=c*(.24+diffuse*.76)+vec3(.7,.86,1.)*spec*.45;if(kind==2)c+=color*.4;
+float fog=1.-exp(-length(eye-world)*.018);c=mix(c,vec3(.031,.059,.098),fog);outColor=vec4(pow(c,vec3(1./2.2)),1.);}`;
+function shader(type,src){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(s));return s;}
+const prog=gl.createProgram();gl.attachShader(prog,shader(gl.VERTEX_SHADER,vs));gl.attachShader(prog,shader(gl.FRAGMENT_SHADER,fs));gl.linkProgram(prog);if(!gl.getProgramParameter(prog,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(prog));gl.useProgram(prog);
+const U={};for(const name of ['vp','model','particles','color','eye','kind','cubePos'])U[name]=gl.getUniformLocation(prog,name);
+const add=(a,b)=>a.map((x,i)=>x+b[i]),sub=(a,b)=>a.map((x,i)=>x-b[i]),mul=(a,s)=>a.map(x=>x*s),dot=(a,b)=>a.reduce((s,x,i)=>s+x*b[i],0),cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]],unit=a=>mul(a,1/(Math.hypot(...a)||1));
+function mesh(data){const vao=gl.createVertexArray();gl.bindVertexArray(vao);const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.STATIC_DRAW);for(let i=0;i<2;i++){gl.enableVertexAttribArray(i);gl.vertexAttribPointer(i,3,gl.FLOAT,false,24,i*12);}return {vao,n:data.length/6};}
+const cd=[];for(let axis=0;axis<3;axis++)for(const sign of [-1,1]){const n=[0,0,0];n[axis]=sign;const a=(axis+1)%3,b=(axis+2)%3;const corners=[[-1,-1],[1,-1],[1,1],[-1,1]];for(const i of [0,1,2,0,2,3]){const p=[0,0,0];p[axis]=sign;p[a]=corners[i][0];p[b]=corners[i][1];cd.push(...p,...n);}}
+const cubeMesh=mesh(cd),sd=[];function spherePoint(a,b){return [Math.sin(a)*Math.cos(b),Math.cos(a),Math.sin(a)*Math.sin(b)];}for(let i=0;i<8;i++)for(let j=0;j<12;j++){const a=i*Math.PI/8,b=j*Math.PI*2/12,da=Math.PI/8,db=Math.PI*2/12;const p=[spherePoint(a,b),spherePoint(a+da,b),spherePoint(a+da,b+db),spherePoint(a,b+db)];for(const k of [0,1,2,0,2,3])sd.push(...p[k],...p[k]);}const sphere=mesh(sd);
+const instances=gl.createBuffer();gl.bindVertexArray(sphere.vao);gl.bindBuffer(gl.ARRAY_BUFFER,instances);gl.bufferData(gl.ARRAY_BUFFER,1000*16,gl.DYNAMIC_DRAW);gl.enableVertexAttribArray(2);gl.vertexAttribPointer(2,4,gl.FLOAT,false,16,0);gl.vertexAttribDivisor(2,1);
+const eye=[7,5.5,12],look=[0,1.2,0],forward=unit(sub(look,eye)),right=unit(cross(forward,[0,1,0])),up=cross(right,forward);
+function multiply(a,b){const c=new Float32Array(16);for(let col=0;col<4;col++)for(let row=0;row<4;row++)for(let k=0;k<4;k++)c[col*4+row]+=a[k*4+row]*b[col*4+k];return c;}
+function viewProjection(){const aspect=canvas.width/canvas.height,f=1/Math.tan(Math.PI/7),near=.1,far=100;const p=[f/aspect,0,0,0,0,f,0,0,0,0,(far+near)/(near-far),-1,0,0,2*far*near/(near-far),0];const v=[...[]];v.push(right[0],up[0],-forward[0],0,right[1],up[1],-forward[1],0,right[2],up[2],-forward[2],0,-dot(right,eye),-dot(up,eye),dot(forward,eye),1);return multiply(p,v);}
+let pos,vel,omega,q,parts=[],acc=0,paused=false,boost=false,aim=[0,1.6,0];const origin=[0,2.4,7];
+function reset(){pos=[0,1.65,0];vel=[0,0,0];omega=[0,0,0];q=[0,0,0,1];parts=[];acc=0;}reset();
+function basis(){const [x,y,z,w]=q;return [[1-2*y*y-2*z*z,2*x*y+2*w*z,2*x*z-2*w*y],[2*x*y-2*w*z,1-2*x*x-2*z*z,2*y*z+2*w*x],[2*x*z+2*w*y,2*y*z-2*w*x,1-2*x*x-2*y*y]];}
+function transform(p,s,b=[[1,0,0],[0,1,0],[0,0,1]]){return new Float32Array([...mul(b[0],s[0]),0,...mul(b[1],s[1]),0,...mul(b[2],s[2]),0,...p,1]);}
+function step(dt){const b=basis();vel=add(vel,mul(sub([0,1.65,0],pos),dt*3));vel=mul(vel,Math.exp(-1.1*dt));pos=add(pos,mul(vel,dt));omega=mul(omega,Math.exp(-.75*dt));const dq=cross(omega,q.slice(0,3));for(let i=0;i<3;i++)q[i]+=dt*.5*(omega[i]*q[3]+dq[i]);q[3]-=dt*.5*dot(omega,q.slice(0,3));q=unit(q);
+acc+=dt*Number(flow.value)*(boost?2:1);while(acc>=1&&parts.length<950){acc--;const dir=unit(sub(add(aim,[(Math.random()-.5)*.18,(Math.random()-.5)*.18,0]),origin));parts.push({p:add(origin,[(Math.random()-.5)*.12,(Math.random()-.5)*.12,0]),v:mul(dir,Number(force.value)*(boost?1.3:1)),age:0});}acc=Math.min(acc,1);
+for(const p of parts){p.age+=dt;p.v[1]-=1.4*dt;p.p=add(p.p,mul(p.v,dt));const rel=sub(p.p,pos),local=b.map(a=>dot(rel,a)),extent=1.065;if(local.every(x=>Math.abs(x)<extent)){let axis=0;for(let i=1;i<3;i++)if(Math.abs(local[i])>Math.abs(local[axis]))axis=i;const normal=mul(b[axis],local[axis]<0?-1:1),r=sub(p.p,pos),surface=add(vel,cross(omega,r)),vn=dot(sub(p.v,surface),normal);p.p=add(p.p,mul(normal,extent-Math.abs(local[axis])+.003));if(vn<0){const impulse=-(1.65)*vn/(1/.035+1/3+dot(cross(r,normal),cross(r,normal))/2);p.v=add(p.v,mul(normal,impulse/.035));vel=sub(vel,mul(normal,impulse/3));omega=sub(omega,mul(cross(r,normal),impulse/2));}}
+if(p.p[1]<.07){p.p[1]=.07;if(p.v[1]<0)p.v[1]*=-.55;p.v[0]*=.98;p.v[2]*=.98;}}
+parts=parts.filter(p=>p.age<4.5&&Math.hypot(...p.p)<35);
+}
+function aimAt(e){const rect=canvas.getBoundingClientRect(),x=2*(e.clientX-rect.left)/rect.width-1,y=1-2*(e.clientY-rect.top)/rect.height,tan=Math.tan(Math.PI/7);const ray=unit(add(forward,add(mul(right,x*tan*rect.width/rect.height),mul(up,y*tan))));const t=-eye[2]/ray[2];if(t>0)aim=add(eye,mul(ray,t));}
+canvas.addEventListener('pointermove',aimAt);canvas.addEventListener('pointerdown',e=>{aimAt(e);boost=true;canvas.setPointerCapture(e.pointerId);});for(const event of ['pointerup','pointercancel','lostpointercapture'])canvas.addEventListener(event,()=>boost=false);window.addEventListener('blur',()=>boost=false);
+const pause=document.querySelector('#pause'),flow=document.querySelector('#flow'),force=document.querySelector('#force');pause.onclick=()=>{paused=!paused;pause.textContent=paused?'Resume':'Pause';};document.querySelector('#reset').onclick=reset;
+function draw(m,color,kind,model){gl.bindVertexArray(m.vao);gl.uniform1i(U.particles,0);gl.uniform1i(U.kind,kind);gl.uniform3fv(U.color,color);gl.uniformMatrix4fv(U.model,false,model);gl.drawArrays(gl.TRIANGLES,0,m.n);}
+gl.enable(gl.DEPTH_TEST);gl.clearColor(.031,.059,.098,1);gl.uniform3fv(U.eye,eye);let last=performance.now();
+function frame(now){const dpr=Math.min(devicePixelRatio,2),w=Math.round(innerWidth*dpr),h=Math.round(innerHeight*dpr);if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h);}let dt=Math.min((now-last)/1000,.05);last=now;if(!paused){while(dt>0){const s=Math.min(dt,1/120);step(s);dt-=s;}}gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.uniformMatrix4fv(U.vp,false,viewProjection());gl.uniform3fv(U.cubePos,pos);
+draw(cubeMesh,[.035,.065,.10],0,transform([0,-.12,0],[30,.1,30]));draw(cubeMesh,[.14,.38,.53],1,transform(pos,[1,1,1],basis()));draw(sphere,[.12,.8,.65],2,transform(origin,[.14,.14,.14]));
+const data=new Float32Array(parts.length*4);parts.forEach((p,i)=>data.set([...p.p,p.age],i*4));gl.bindVertexArray(sphere.vao);gl.bindBuffer(gl.ARRAY_BUFFER,instances);gl.bufferSubData(gl.ARRAY_BUFFER,0,data);gl.uniform1i(U.particles,1);gl.uniform1i(U.kind,2);gl.uniform3fv(U.color,[.18,.9,.68]);gl.drawArraysInstanced(gl.TRIANGLES,0,sphere.n,parts.length);document.querySelector('#count').textContent=paused?'SIMULATION PAUSED':`${parts.length} PARTICLES`;requestAnimationFrame(frame);}
+requestAnimationFrame(frame);
+}
+</script>
+</body></html>
